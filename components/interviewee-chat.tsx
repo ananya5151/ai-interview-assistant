@@ -767,6 +767,23 @@ export function IntervieweeChat() {
     submitFnRef.current = handleStopAndSend
   }, [handleStopAndSend])
 
+  // Cleanup media stream on unmount or when interview completes/resets
+  useEffect(() => {
+    const releaseStream = () => {
+      const s = mediaStreamRef.current
+      if (s) {
+        s.getTracks().forEach(t => t.stop())
+        mediaStreamRef.current = null
+      }
+    }
+    if (status === 'completed' || status === 'idle') {
+      releaseStream()
+    }
+    return () => {
+      releaseStream()
+    }
+  }, [status])
+
   return (
     <div className="max-w-4xl mx-auto space-y-4">
       {/* File Upload Section */}
