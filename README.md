@@ -12,9 +12,6 @@ A voice-first technical interview app built with Next.js 14, TypeScript, Tailwin
 
 ## Live demo / Deploy options
 
-You can deploy this on Vercel (recommended). No Docker required.
-
-- Vercel: One-click import from GitHub, set `GOOGLE_GENERATIVE_AI_API_KEY` in Project → Settings → Environment Variables, then Deploy.
 
 ## Requirements
 
