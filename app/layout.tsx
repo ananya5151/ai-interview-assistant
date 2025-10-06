@@ -5,9 +5,9 @@ import { Analytics } from '@vercel/analytics/next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'v0 App',
-  description: 'Created with v0',
-  generator: 'v0.app',
+  title: 'Crisp - AI Interview Assistant',
+  description: 'Voice-powered AI technical interviews with real-time evaluation and feedback',
+  generator: 'Next.js',
 }
 
 export default function RootLayout({
@@ -17,7 +17,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable}`}>
+      <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable} antialiased`}>
         {children}
         <Analytics />
       </body>

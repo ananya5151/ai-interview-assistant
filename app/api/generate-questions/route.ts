@@ -86,24 +86,24 @@ Constraints:
             })
         }
 
-        // Attempt 1: smaller flash model to reduce reasoning token usage
+        // Attempt 1: modern flash model to reduce reasoning token usage
         try {
-            const { object } = await callModel("models/gemini-1.5-flash-8b-latest", 0.3)
-            console.log("Generated 6 questions (gemini-1.5-flash-8b-latest)")
+            const { object } = await callModel("models/gemini-2.0-flash", 0.3)
+            console.log("Generated 6 questions (gemini-2.0-flash)")
             return Response.json({ questions: object.questions })
         } catch (err1) {
-            console.warn("Retrying with gemini-1.5-flash-latest due to:", err1)
-            // Attempt 2: standard flash model, even tighter temperature
+            console.warn("Retrying with gemini-1.5-flash due to:", err1)
+            // Attempt 2: standard 1.5 flash model, even tighter temperature
             try {
-                const { object } = await callModel("models/gemini-1.5-flash-latest", 0.2)
-                console.log("Generated 6 questions (gemini-1.5-flash-latest)")
+                const { object } = await callModel("models/gemini-1.5-flash", 0.2)
+                console.log("Generated 6 questions (gemini-1.5-flash)")
                 return Response.json({ questions: object.questions })
             } catch (err2) {
-                console.warn("Retrying with gemini-1.5-pro-latest due to:", err2)
+                console.warn("Retrying with gemini-1.5-pro due to:", err2)
                 // Attempt 3: pro model as a final AI attempt
                 try {
-                    const { object } = await callModel("models/gemini-1.5-pro-latest", 0.2)
-                    console.log("Generated 6 questions (gemini-1.5-pro-latest)")
+                    const { object } = await callModel("models/gemini-1.5-pro", 0.2)
+                    console.log("Generated 6 questions (gemini-1.5-pro)")
                     return Response.json({ questions: object.questions })
                 } catch (err3) {
                     console.error("All AI attempts failed, falling back to static questions", err3)

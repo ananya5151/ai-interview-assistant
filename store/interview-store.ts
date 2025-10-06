@@ -1,7 +1,7 @@
 "use client"
 
 import { create } from "zustand"
-import { persist } from "zustand/middleware"
+import { persist, createJSONStorage } from "zustand/middleware"
 import { nanoid } from "nanoid"
 
 export type Difficulty = "easy" | "medium" | "hard"
@@ -13,10 +13,10 @@ export type Question = {
   text: string
   difficulty: Difficulty
   answer?: string
-  answerAudio?: Blob // Audio recording of candidate's answer
+  answerAudioUrl?: string // Store as data URL for persistence
   score?: number
   feedback?: string
-  answerDurationSec?: number // measured seconds from question asked to answer submission
+  answerDurationSec?: number
 }
 
 type CandidateProfile = {
@@ -37,7 +37,7 @@ type CandidateCompleted = {
     question: string
     difficulty: Difficulty
     answer: string
-    answerAudio?: Blob
+    answerAudioUrl?: string
     score: number
     feedback: string
     answerDurationSec?: number
@@ -56,19 +56,38 @@ type Store = {
   currentIndex: number
   startedAt: number | null
   durationSec: number | null
-
-  candidates: CandidateCompleted[]
+  // Transient last session (not persisted) to surface the most recent interview to the interviewer dashboard
+  lastSession?: CandidateCompleted | null
 
   setCandidate: (profile: Partial<CandidateProfile>) => void
   setStatus: (s: Status) => void
   pushMessage: (m: Message) => void
 
   setQuestion: (idx: number, q: Pick<Question, "text" | "difficulty">) => void
+  setQuestionsBulk: (qs: Array<{ text: string; difficulty: Difficulty }>) => void
+  // Update result fields for a specific question without changing currentIndex
+  updateQuestionResult: (idx: number, patch: Partial<Pick<Question, "answer" | "score" | "feedback" | "answerAudioUrl" | "answerDurationSec">>) => void
   startQuestion: (durationSec: number) => void
-  completeQuestion: (idx: number, patch: Pick<Question, "answer" | "answerAudio" | "score" | "feedback" | "answerDurationSec">) => void
+  completeQuestion: (idx: number, patch: {
+    answer: string
+    answerAudio?: Blob
+    score: number
+    feedback: string
+    answerDurationSec?: number
+  }) => Promise<void>
 
   resetSession: () => void
   finalizeSession: (finalScore: number, summary: string) => Promise<void>
+}
+
+// Helper to convert Blob to data URL for storage
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onloadend = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(blob)
+  })
 }
 
 export const useInterviewStore = create<Store>()(
@@ -76,16 +95,24 @@ export const useInterviewStore = create<Store>()(
     (set, get) => ({
       candidate: { name: "", email: "", phone: "" },
       status: "idle",
-      messages: [{ role: "assistant", text: "Welcome to the AI Interview Assistant. Please upload your resume in PDF or DOCX format." }],
-      questions: new Array(6).fill(null).map(() => ({ text: "", difficulty: "easy" as Difficulty })),
+      messages: [],
+      questions: new Array(6).fill(null).map((_, i) => ({
+        text: "",
+        difficulty: difficultiesSequence[i]
+      })),
       currentIndex: 0,
       startedAt: null,
       durationSec: null,
-      candidates: [],
+      // candidates intentionally omitted
 
-      setCandidate: (profile) => set((s) => ({ candidate: { ...s.candidate, ...profile } })),
-      setStatus: (s2) => set(() => ({ status: s2 })),
-      pushMessage: (m) => set((s) => ({ messages: [...s.messages, m] })),
+      setCandidate: (profile) =>
+        set((s) => ({ candidate: { ...s.candidate, ...profile } })),
+
+      setStatus: (s2) =>
+        set(() => ({ status: s2 })),
+
+      pushMessage: (m) =>
+        set((s) => ({ messages: [...s.messages, m] })),
 
       setQuestion: (idx, q) =>
         set((s) => {
@@ -93,29 +120,72 @@ export const useInterviewStore = create<Store>()(
           arr[idx] = { ...arr[idx], ...q }
           return { questions: arr }
         }),
-      startQuestion: (duration) =>
-        set((s) => ({ status: "in_progress", startedAt: Date.now(), durationSec: duration })),
-      completeQuestion: (idx, patch) =>
+
+      // Set all questions at once to avoid intermediate race conditions
+      setQuestionsBulk: (qs: Array<{ text: string; difficulty: Difficulty }>) =>
+        set((s) => {
+          const arr = qs.map((q, i) => ({
+            text: q.text || s.questions[i]?.text || "",
+            difficulty: q.difficulty || s.questions[i]?.difficulty,
+          }))
+          return { questions: arr }
+        }),
+
+      updateQuestionResult: (idx, patch) =>
         set((s) => {
           const arr = s.questions.slice()
           arr[idx] = { ...arr[idx], ...patch }
+          return { questions: arr }
+        }),
+
+      startQuestion: (duration) =>
+        set(() => ({
+          status: "in_progress",
+          startedAt: Date.now(),
+          durationSec: duration
+        })),
+
+      completeQuestion: async (idx, patch) => {
+        const { answerAudio, ...rest } = patch
+        let answerAudioUrl: string | undefined
+
+        // Convert Blob to data URL if present
+        if (answerAudio) {
+          try {
+            answerAudioUrl = await blobToDataUrl(answerAudio)
+          } catch (e) {
+            console.error('Failed to convert audio blob:', e)
+          }
+        }
+
+        set((s) => {
+          const arr = s.questions.slice()
+          arr[idx] = {
+            ...arr[idx],
+            ...rest,
+            answerAudioUrl
+          }
           const nextIndex = idx + 1
+
           return {
             questions: arr,
             currentIndex: nextIndex,
             startedAt: null,
             durationSec: null,
-            // status will be updated by caller (either continue or finalize)
             status: nextIndex >= arr.length ? "completed" : "in_progress",
           }
-        }),
+        })
+      },
 
       resetSession: () =>
         set({
           candidate: { name: "", email: "", phone: "" },
           status: "idle",
           messages: [],
-          questions: new Array(6).fill(null).map(() => ({ text: "", difficulty: "easy" as Difficulty })),
+          questions: new Array(6).fill(null).map((_, i) => ({
+            text: "",
+            difficulty: difficultiesSequence[i]
+          })),
           currentIndex: 0,
           startedAt: null,
           durationSec: null,
@@ -134,15 +204,18 @@ export const useInterviewStore = create<Store>()(
             question: q.text,
             difficulty: q.difficulty,
             answer: q.answer || "",
+            answerAudioUrl: q.answerAudioUrl,
             score: q.score || 0,
             feedback: q.feedback || "",
-            answerDurationSec: q.answerDurationSec, // keep time taken
+            answerDurationSec: q.answerDurationSec,
           })),
           transcript: s.messages,
           completedAt: Date.now(),
         }
-        set((state) => ({
-          candidates: [completed, ...state.candidates],
+
+        // Store transiently in-memory (not persisted) so interviewer dashboard can show the completed interview
+        set(() => ({
+          lastSession: completed,
           status: "completed",
           startedAt: null,
           durationSec: null,
@@ -151,8 +224,17 @@ export const useInterviewStore = create<Store>()(
     }),
     {
       name: "crisp-interview-store",
-      version: 1,
-      // Using localStorage for simplicity; can be swapped to IndexedDB/localForage if needed.
+      version: 2,
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({
+        candidate: state.candidate,
+        status: state.status,
+        messages: state.messages,
+        questions: state.questions,
+        currentIndex: state.currentIndex,
+        startedAt: state.startedAt,
+        durationSec: state.durationSec,
+      }),
     },
   ),
 )

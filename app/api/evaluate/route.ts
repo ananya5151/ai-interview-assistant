@@ -22,66 +22,66 @@ export async function POST(req: Request) {
 
     if (!answer || answer.trim() === "") {
       console.log('Warning: Empty answer provided for evaluation')
-      // Allow empty answers but return a default low score
       return Response.json({
         score: 0,
-        feedback: "No answer provided. Please try speaking your answer clearly."
+        feedback: "No answer was provided."
       })
     }
 
-    const { text } = await generateText({
-      model: google("models/gemini-2.5-flash"),
-      prompt: `
-You are an expert technical interviewer evaluating a Full Stack Developer interview answer.
+    let text: string = ''
+    try {
+      const result = await generateText({
+        model: google("models/gemini-2.5-flash"),
+        prompt: `You are an expert technical interviewer evaluating a Full Stack Developer interview answer.\n\nQuestion: ${question}\nCandidate Answer: ${answer}\nDifficulty: ${difficulty}\nTime Taken: ${timeTakenSec || 'N/A'} seconds\n\nRespond ONLY with JSON: {\n  \"score\": <0-10>,\n  \"feedback\": \"<short feedback>\"\n}`,
+        maxOutputTokens: 300,
+        temperature: 0.3,
+      })
+      text = result.text
+    } catch (modelErr: any) {
+      // Detect rate limit from provider-utils error shape
+      if (modelErr?.statusCode === 429 || /quota/i.test(modelErr?.message || '')) {
+        return new Response(JSON.stringify({
+          score: 0,
+          feedback: "Rate limit reached. Your answer was recorded but not evaluated.",
+          rateLimited: true
+        }), { status: 429 })
+      }
+      console.warn('Model call failed, returning fallback evaluation', modelErr)
+      return Response.json({
+        score: 5,
+        feedback: "Automatic fallback: partial evaluation due to service issue."
+      })
+    }
 
-Question: ${question}
-Candidate Answer: ${answer}
-Difficulty: ${difficulty}
-Time Taken: ${timeTakenSec || 'N/A'} seconds
-
-Evaluate this answer and respond with ONLY a JSON object in this exact format:
-{
-  "score": 7,
-  "feedback": "Good understanding of React hooks with practical examples. Could have mentioned useEffect dependencies for completeness."
-}
-
-Scoring Guidelines:
-- 0-3: Incorrect, missing key concepts, or no answer
-- 4-6: Partially correct, basic understanding shown
-- 7-8: Good answer, demonstrates solid knowledge
-- 9-10: Excellent, comprehensive answer with insights
-
-Keep feedback to 1-2 sentences, focused and constructive.
-`,
-      maxOutputTokens: 300,
-      temperature: 0.3,
-    })
-
-    let evaluation
+    let evaluation: any
     try {
       evaluation = JSON.parse(text.trim())
     } catch (parseError) {
-      // Fallback: extract JSON from text if it's wrapped in other content
       const jsonMatch = text.match(/\{[\s\S]*\}/)
       if (jsonMatch) {
-        evaluation = JSON.parse(jsonMatch[0])
-      } else {
-        throw new Error("Invalid JSON response from Gemini")
+        try { evaluation = JSON.parse(jsonMatch[0]) } catch { }
       }
     }
 
-    // Validate the structure
-    if (typeof evaluation.score !== 'number' || !evaluation.feedback) {
-      throw new Error("Invalid evaluation structure")
+    // If model didn't return valid JSON, attempt a simple heuristic fallback
+    if (!evaluation || typeof evaluation.score !== 'number' || typeof evaluation.feedback !== 'string') {
+      // Basic heuristic: score by answer length and keyword overlap with question
+      const qWords: string[] = (question || "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+      const aWords: string[] = (answer || "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+      const overlap = qWords.filter((w: string) => aWords.includes(w)).length
+      const lengthScore = Math.min(1, aWords.length / 50) // up to 1.0
+      const overlapScore = Math.min(1, overlap / Math.max(1, qWords.length))
+      const heuristicScore = Math.round(((lengthScore * 0.4) + (overlapScore * 0.6)) * 10)
+      evaluation = { score: heuristicScore || 3, feedback: 'Fallback heuristic evaluation (partial confidence).' }
     }
 
-    // Ensure score is within bounds
-    evaluation.score = Math.max(0, Math.min(10, evaluation.score))
+    // Normalize score to integer 0-10
+    evaluation.score = Math.max(0, Math.min(10, Math.round(Number(evaluation.score) || 0)))
 
     console.log('Evaluation completed:', evaluation)
     return Response.json(evaluation)
   } catch (e: any) {
     console.error('Evaluate API error:', e);
-    return new Response(JSON.stringify({ error: "Failed to evaluate", details: e.message }), { status: 500 })
+    return new Response(JSON.stringify({ error: "Failed to evaluate", details: e.message || 'Unknown error' }), { status: 500 })
   }
 }
